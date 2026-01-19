@@ -1,20 +1,14 @@
-# 🔧 FIX: Ensure backend module is discoverable on Streamlit Cloud
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 import streamlit as st
 import pandas as pd
 import numpy as np
 import base64
 from datetime import datetime
 
-from backend.services.model_service import ModelService
-from backend.services.preprocessing import DataPreprocessor
-from backend.services.decision_engine import DecisionEngine
-from backend.services.explainability import ExplainerService
+from model_service import ModelService
+from preprocessing import DataPreprocessor
+from decision_engine import DecisionEngine
+from explainability import ExplainerService
 
-# Page configuration
 st.set_page_config(
     page_title="TRUST-AI Platform",
     layout="wide",
