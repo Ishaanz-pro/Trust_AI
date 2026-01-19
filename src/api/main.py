@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
 import numpy as np
+import pandas as pd
 import sys
 import os
 
@@ -21,10 +22,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Enable CORS
+# Enable CORS - NOTE: In production, replace "*" with specific allowed origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # TODO: Replace with specific origins in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -70,9 +71,8 @@ class FairnessAuditResponse(BaseModel):
     report: str
 
 
-@app.on_event("startup")
-async def load_model():
-    """Load model on startup"""
+def load_model_on_startup():
+    """Load model on startup - called during application initialization"""
     global model
     model = LoanApprovalModel()
     
@@ -85,6 +85,9 @@ async def load_model():
         from models.loan_model import train_and_save_model
         model = train_and_save_model(output_path=model_path)
         print("New model trained and saved")
+
+# Load model at module initialization (will run when the module is imported)
+load_model_on_startup()
 
 
 @app.get("/")
@@ -135,7 +138,6 @@ async def predict_single(application: LoanApplication):
     
     try:
         # Convert application to DataFrame
-        import pandas as pd
         app_dict = application.dict()
         df = pd.DataFrame([app_dict])
         
@@ -172,8 +174,6 @@ async def predict_batch(request: BatchPredictionRequest):
         raise HTTPException(status_code=503, detail="Model not loaded")
     
     try:
-        import pandas as pd
-        
         # Convert applications to DataFrame
         apps_data = [app.dict() for app in request.applications]
         df = pd.DataFrame(apps_data)
@@ -217,8 +217,6 @@ async def audit_fairness(request: BatchPredictionRequest):
         raise HTTPException(status_code=503, detail="Model not loaded")
     
     try:
-        import pandas as pd
-        
         # Convert applications to DataFrame
         apps_data = [app.dict() for app in request.applications]
         df = pd.DataFrame(apps_data)
