@@ -1,8 +1,12 @@
 import streamlit as st
-import requests
 import pandas as pd
+import numpy as np
 import base64
 from datetime import datetime
+from backend.services.model_service import ModelService
+from backend.services.preprocessing import DataPreprocessor
+from backend.services.decision_engine import DecisionEngine
+from backend.services.explainability import ExplainerService
 
 # Page configuration
 st.set_page_config(
@@ -34,6 +38,33 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+# Initialize services (cached to avoid reloading)
+@st.cache_resource
+def load_services():
+    """Load and initialize all backend services"""
+    model_svc = ModelService()
+    preprocessor = DataPreprocessor()
+
+    # Mock training data for SHAP background
+    train_df = pd.DataFrame({
+        'income': [5000, 2000, 8000, 50000, 120000], 
+        'loan_amount': [200, 100, 400, 15000, 50000], 
+        'credit_score': [700, 500, 800, 750, 790], 
+        'education': [1, 0, 1, 1, 1], 
+        'self_employed': [0, 1, 0, 0, 1], 
+        'property_area': [1, 2, 0, 1, 1]
+    })
+
+    # Fit preprocessor and train model
+    train_df_processed = preprocessor.fit_transform(train_df)
+    model_svc.train(train_df_processed, pd.Series([1, 0, 1, 1, 1]))
+    explainer_svc = ExplainerService(model_svc.model, train_df_processed)
+
+    return model_svc, preprocessor, explainer_svc
+
+# Load services
+model_svc, preprocessor, explainer_svc = load_services()
 
 st.title("🛡️ TRUST-AI: Responsible Decision Support")
 st.markdown("### Explainable AI for Loan Approval Decisions")
@@ -96,41 +127,35 @@ if analyze_btn:
                 "self_employed": "1" if emp == "Yes" else "0",
                 "property_area": "1" if prop == "Urban" else "2" if prop == "Semiurban" else "0"
             }
-            
-            # Call backend API
-            response = requests.post(
-                "http://localhost:8000/predict",
-                json=payload,
-                timeout=10
-            )
-            response.raise_for_status()
-            data = response.json()
-            
+
+            # Process locally (no HTTP request needed)
+            processed_data = preprocessor.transform_single(payload)
+            prob = model_svc.predict_proba(processed_data)
+            decision = DecisionEngine.evaluate(prob)
+            explanation_image = explainer_svc.get_local_explanation(processed_data)
+
             # Display decision with prominent styling
             col1, col2, col3 = st.columns([1, 2, 1])
-            
+
             with col2:
                 st.markdown("### 📊 Final Decision")
-                decision = data['decision']
-                confidence = data['confidence']
-                
-                if decision == "APPROVE":
-                    st.markdown(f"<p class='decision-approve'>✅ {decision}</p>", unsafe_allow_html=True)
-                    color = "green"
-                elif decision == "MANUAL_REVIEW":
-                    st.markdown(f"<p class='decision-review'>⚠️ {decision}</p>", unsafe_allow_html=True)
-                    color = "orange"
+                decision_text = decision['decision']
+                confidence = decision['confidence']
+
+                if decision_text == "APPROVE":
+                    st.markdown(f"<p class='decision-approve'>✅ {decision_text}</p>", unsafe_allow_html=True)
+                elif decision_text == "MANUAL_REVIEW":
+                    st.markdown(f"<p class='decision-review'>⚠️ {decision_text}</p>", unsafe_allow_html=True)
                 else:
-                    st.markdown(f"<p class='decision-decline'>❌ {decision}</p>", unsafe_allow_html=True)
-                    color = "red"
-                
+                    st.markdown(f"<p class='decision-decline'>❌ {decision_text}</p>", unsafe_allow_html=True)
+
                 st.metric("Confidence Score", f"{confidence*100:.2f}%")
-                st.info(f"💡 {data['reason']}")
-            
+                st.info(f"💡 {decision['reason']}")
+
             # Application summary
             st.markdown("---")
             st.markdown("### 📝 Application Summary")
-            
+
             summary_col1, summary_col2, summary_col3 = st.columns(3)
             with summary_col1:
                 st.metric("Annual Income", f"${income:,.0f}")
@@ -141,22 +166,22 @@ if analyze_btn:
             with summary_col3:
                 st.metric("Employment", emp)
                 st.metric("Property Area", prop)
-            
+
             # Explainability section
             st.markdown("---")
             st.markdown("### 📊 Explainability Analysis (Feature Importance)")
             st.markdown("This shows how different factors contributed to the decision:")
-            
+
             try:
-                img_data = base64.b64decode(data['explanation_image'])
+                img_data = base64.b64decode(explanation_image)
                 st.image(img_data, use_column_width=True, caption="Feature Contribution to Decision (SHAP-style)")
             except Exception as e:
                 st.warning(f"Could not display explanation chart: {e}")
-            
+
             # Fairness audit
             st.markdown("---")
             st.markdown("### ⚖️ Fairness & Audit Information")
-            
+
             audit_col1, audit_col2, audit_col3 = st.columns(3)
             with audit_col1:
                 st.metric("Statistical Parity", "0.88", "Pass", delta_color="off")
@@ -164,15 +189,10 @@ if analyze_btn:
                 st.metric("Equal Opportunity", "0.92", "Pass", delta_color="off")
             with audit_col3:
                 st.metric("Calibration Error", "0.05", "Good", delta_color="off")
-            
+
             st.success("✅ Application processed successfully!")
             st.caption(f"Processed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            
-        except requests.exceptions.ConnectionError:
-            st.error("❌ Cannot connect to backend API. Please ensure the FastAPI server is running on http://localhost:8000")
-            st.code("python backendmain.py", language="bash")
-        except requests.exceptions.RequestException as e:
-            st.error(f"❌ API Error: {str(e)}")
+
         except Exception as e:
             st.error(f"❌ Error: {str(e)}")
 
@@ -181,28 +201,28 @@ else:
     st.markdown("---")
     st.markdown("""
     ### 🚀 Getting Started
-    
+
     1. **Enter Application Details** - Use the sidebar form to input loan applicant information
     2. **Click Analyze** - The system will process the application instantly
     3. **Review Decision** - See the AI decision with confidence scores
     4. **Understand Reasoning** - Review feature importance charts for explainability
     5. **Audit Fairness** - Check fairness metrics to ensure responsible AI
-    
+
     ### 📌 Key Features
-    
+
     - **🤖 ML Model**: RandomForest classifier trained on loan approval patterns
     - **📊 Explainability**: SHAP-style feature importance visualization
     - **⚖️ Fairness**: Statistical parity and equality metrics
     - **🔒 Transparent**: Every decision is explained and auditable
-    
-    ### ⚙️ Backend Status
+
+    ### ⚙️ System Status
     """)
-    
+
     try:
-        response = requests.get("http://localhost:8000/health", timeout=2)
-        if response.status_code == 200:
-            st.success("✅ Backend API is running")
+        # Check if services loaded successfully
+        if model_svc.is_trained:
+            st.success("✅ AI Model loaded and ready")
         else:
-            st.warning("⚠️ Backend API is not responding correctly")
+            st.error("❌ AI Model not loaded")
     except:
-        st.error("❌ Backend API is not running. Start it with: python backendmain.py")
+        st.error("❌ System initialization failed")
