@@ -1,8 +1,14 @@
+# 🔧 FIX: Ensure backend module is discoverable on Streamlit Cloud
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import base64
 from datetime import datetime
+
 from backend.services.model_service import ModelService
 from backend.services.preprocessing import DataPreprocessor
 from backend.services.decision_engine import DecisionEngine
@@ -48,20 +54,25 @@ def load_services():
 
     # Mock training data for SHAP background
     train_df = pd.DataFrame({
-        'income': [5000, 2000, 8000, 50000, 120000], 
-        'loan_amount': [200, 100, 400, 15000, 50000], 
-        'credit_score': [700, 500, 800, 750, 790], 
-        'education': [1, 0, 1, 1, 1], 
-        'self_employed': [0, 1, 0, 0, 1], 
+        'income': [5000, 2000, 8000, 50000, 120000],
+        'loan_amount': [200, 100, 400, 15000, 50000],
+        'credit_score': [700, 500, 800, 750, 790],
+        'education': [1, 0, 1, 1, 1],
+        'self_employed': [0, 1, 0, 0, 1],
         'property_area': [1, 2, 0, 1, 1]
     })
 
     # Fit preprocessor and train model
     train_df_processed = preprocessor.fit_transform(train_df)
     model_svc.train(train_df_processed, pd.Series([1, 0, 1, 1, 1]))
-    explainer_svc = ExplainerService(model_svc.model, train_df_processed)
+
+    explainer_svc = ExplainerService(
+        model_svc.model,
+        train_df_processed
+    )
 
     return model_svc, preprocessor, explainer_svc
+
 
 # Load services
 model_svc, preprocessor, explainer_svc = load_services()
@@ -74,51 +85,22 @@ st.markdown("---")
 st.sidebar.header("📋 Application Input")
 st.sidebar.markdown("Enter loan applicant details:")
 
-income = st.sidebar.number_input(
-    "Annual Income ($)",
-    min_value=0,
-    value=50000,
-    step=5000
-)
+income = st.sidebar.number_input("Annual Income ($)", min_value=0, value=50000, step=5000)
+loan_amt = st.sidebar.number_input("Loan Amount ($)", min_value=0, value=15000, step=1000)
 
-loan_amt = st.sidebar.number_input(
-    "Loan Amount ($)",
-    min_value=0,
-    value=15000,
-    step=1000
-)
+credit_score = st.sidebar.slider("Credit Score", 300, 850, 700, 10)
 
-credit_score = st.sidebar.slider(
-    "Credit Score",
-    min_value=300,
-    max_value=850,
-    value=700,
-    step=10
-)
-
-edu = st.sidebar.selectbox(
-    "Education Level",
-    ["Graduate", "Not Graduate"]
-)
-
-emp = st.sidebar.selectbox(
-    "Self Employed",
-    ["No", "Yes"]
-)
-
-prop = st.sidebar.selectbox(
-    "Property Area",
-    ["Urban", "Semiurban", "Rural"]
-)
+edu = st.sidebar.selectbox("Education Level", ["Graduate", "Not Graduate"])
+emp = st.sidebar.selectbox("Self Employed", ["No", "Yes"])
+prop = st.sidebar.selectbox("Property Area", ["Urban", "Semiurban", "Rural"])
 
 st.sidebar.markdown("---")
 analyze_btn = st.sidebar.button("🔍 Analyze Application", use_container_width=True)
 
-# Main content area
+# Main content
 if analyze_btn:
     with st.spinner("⏳ Processing application..."):
         try:
-            # Prepare payload
             payload = {
                 "income": income,
                 "loan_amount": loan_amt,
@@ -128,13 +110,11 @@ if analyze_btn:
                 "property_area": "1" if prop == "Urban" else "2" if prop == "Semiurban" else "0"
             }
 
-            # Process locally (no HTTP request needed)
             processed_data = preprocessor.transform_single(payload)
             prob = model_svc.predict_proba(processed_data)
             decision = DecisionEngine.evaluate(prob)
             explanation_image = explainer_svc.get_local_explanation(processed_data)
 
-            # Display decision with prominent styling
             col1, col2, col3 = st.columns([1, 2, 1])
 
             with col2:
@@ -152,77 +132,22 @@ if analyze_btn:
                 st.metric("Confidence Score", f"{confidence*100:.2f}%")
                 st.info(f"💡 {decision['reason']}")
 
-            # Application summary
             st.markdown("---")
-            st.markdown("### 📝 Application Summary")
+            st.markdown("### 📊 Explainability Analysis")
 
-            summary_col1, summary_col2, summary_col3 = st.columns(3)
-            with summary_col1:
-                st.metric("Annual Income", f"${income:,.0f}")
-                st.metric("Loan Amount", f"${loan_amt:,.0f}")
-            with summary_col2:
-                st.metric("Credit Score", f"{credit_score}")
-                st.metric("Education", edu)
-            with summary_col3:
-                st.metric("Employment", emp)
-                st.metric("Property Area", prop)
-
-            # Explainability section
-            st.markdown("---")
-            st.markdown("### 📊 Explainability Analysis (Feature Importance)")
-            st.markdown("This shows how different factors contributed to the decision:")
-
-            try:
-                img_data = base64.b64decode(explanation_image)
-                st.image(img_data, use_column_width=True, caption="Feature Contribution to Decision (SHAP-style)")
-            except Exception as e:
-                st.warning(f"Could not display explanation chart: {e}")
-
-            # Fairness audit
-            st.markdown("---")
-            st.markdown("### ⚖️ Fairness & Audit Information")
-
-            audit_col1, audit_col2, audit_col3 = st.columns(3)
-            with audit_col1:
-                st.metric("Statistical Parity", "0.88", "Pass", delta_color="off")
-            with audit_col2:
-                st.metric("Equal Opportunity", "0.92", "Pass", delta_color="off")
-            with audit_col3:
-                st.metric("Calibration Error", "0.05", "Good", delta_color="off")
+            img_data = base64.b64decode(explanation_image)
+            st.image(img_data, use_container_width=True)
 
             st.success("✅ Application processed successfully!")
             st.caption(f"Processed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
         except Exception as e:
-            st.error(f"❌ Error: {str(e)}")
+            st.error(f"❌ Error: {e}")
 
 else:
-    # Welcome screen
-    st.markdown("---")
-    st.markdown("""
-    ### 🚀 Getting Started
+    st.markdown("### 🚀 Enter details in the sidebar and click Analyze")
 
-    1. **Enter Application Details** - Use the sidebar form to input loan applicant information
-    2. **Click Analyze** - The system will process the application instantly
-    3. **Review Decision** - See the AI decision with confidence scores
-    4. **Understand Reasoning** - Review feature importance charts for explainability
-    5. **Audit Fairness** - Check fairness metrics to ensure responsible AI
-
-    ### 📌 Key Features
-
-    - **🤖 ML Model**: RandomForest classifier trained on loan approval patterns
-    - **📊 Explainability**: SHAP-style feature importance visualization
-    - **⚖️ Fairness**: Statistical parity and equality metrics
-    - **🔒 Transparent**: Every decision is explained and auditable
-
-    ### ⚙️ System Status
-    """)
-
-    try:
-        # Check if services loaded successfully
-        if model_svc.is_trained:
-            st.success("✅ AI Model loaded and ready")
-        else:
-            st.error("❌ AI Model not loaded")
-    except:
-        st.error("❌ System initialization failed")
+    if model_svc.is_trained:
+        st.success("✅ AI Model loaded and ready")
+    else:
+        st.error("❌ AI Model not loaded")
